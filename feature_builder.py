@@ -7,7 +7,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ✅ Load cached game logs
+#  Load cached game logs
 try:
     game_logs_df = pd.read_csv('team_game_logs.csv')
     game_logs_df['GAME_DATE'] = pd.to_datetime(game_logs_df['GAME_DATE'])
@@ -16,7 +16,7 @@ except FileNotFoundError:
     logger.error("❌ team_game_logs.csv not found. Please ensure the cache file is present.")
     raise
 
-# ✅ Process individual team stats
+#  Process individual team stats
 def process_team_stats(team_abbreviation):
     team_log_df = game_logs_df[game_logs_df['TEAM_ABBREVIATION'] == team_abbreviation]
 
@@ -59,7 +59,7 @@ def process_team_stats(team_abbreviation):
         'is_back_to_back': is_back_to_back
     }
 
-# ✅ Main function: build feature vector for two teams
+#  Main function: build feature vector for two teams
 async def build_feature_vector(home_team_abbr, away_team_abbr):
     try:
         logger.info(f"🚀 Building feature vector for {home_team_abbr} vs {away_team_abbr} using cached data.")
