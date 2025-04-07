@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from fastapi import FastAPI
 from pydantic import BaseModel
 import pandas as pd
@@ -32,21 +31,15 @@ class GameInput(BaseModel):
     is_away_back_to_back: int
     implied_prob_home: float
     implied_prob_away: float
+    implied_prob_over: float  # ✅ New for Over/Under
+    implied_prob_under: float  # ✅ New for Over/Under
     spread_point: float
     outcome_point_Over: float
-    user_odds: float
     home_team: str
     away_team: str
     user_team: str  # "home", "away", "over", "under"
 
 # === Utility functions ===
-
-def implied_probability(odds):
-    odds = float(odds)
-    if odds < 0:
-        return abs(odds) / (abs(odds) + 100)
-    else:
-        return 100 / (odds + 100)
 
 def edge_level(edge):
     if edge >= 0.1:
@@ -64,17 +57,35 @@ def to_py(obj):
         return obj.item()
     return obj
 
+def get_user_implied_prob(input_data, bet_type):
+    user_team = input_data["user_team"]
+
+    if bet_type in ["moneyline", "spread"]:
+        return input_data["implied_prob_home"] if user_team == "home" else input_data["implied_prob_away"]
+    elif bet_type == "overunder":
+        return input_data["implied_prob_over"] if user_team == "over" else input_data["implied_prob_under"]
+    
+    return None
+
 def build_response(input_data, model_prob_raw, bet_type):
     user_team = input_data["user_team"]
-    user_odds = input_data["user_odds"]
-    implied_prob = implied_probability(user_odds)
+    user_implied_prob = get_user_implied_prob(input_data, bet_type)
 
     # Adjust model probability based on user bet direction
-    model_prob = model_prob_raw if user_team == "home" or user_team == "over" else 1 - model_prob_raw
+    if user_team in ["home", "over"]:
+        model_prob = model_prob_raw
+    else:
+        model_prob = 1 - model_prob_raw
 
-    value_edge = model_prob - implied_prob
-    recommendation = "Bet" if value_edge > 0.01 else "Pass"
-    confidence = edge_level(value_edge)
+    # Compute value edge
+    if user_implied_prob is not None:
+        value_edge = model_prob - user_implied_prob
+        recommendation = "Bet" if value_edge > 0.01 else "Pass"
+        confidence = edge_level(value_edge)
+    else:
+        value_edge = None
+        recommendation = "TBD"
+        confidence = "Unknown"
 
     return {
         "bet_type": bet_type,
@@ -83,10 +94,9 @@ def build_response(input_data, model_prob_raw, bet_type):
             "away": input_data["away_team"]
         },
         "user_team": user_team,
-        "user_odds": to_py(user_odds),
-        "implied_prob": to_py(round(implied_prob, 3)),
+        "implied_prob": to_py(round(user_implied_prob, 3)) if user_implied_prob is not None else None,
         "model_prob": to_py(round(model_prob, 3)),
-        "value_edge": to_py(round(value_edge, 3)),
+        "value_edge": to_py(round(value_edge, 3)) if value_edge is not None else None,
         "model_recommendation": recommendation,
         "confidence_level": confidence
     }
