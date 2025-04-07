@@ -31,8 +31,8 @@ class GameInput(BaseModel):
     is_away_back_to_back: int
     implied_prob_home: float
     implied_prob_away: float
-    implied_prob_over: float  # ✅ New for Over/Under
-    implied_prob_under: float  # ✅ New for Over/Under
+    implied_prob_over: float  # New for Over/Under
+    implied_prob_under: float  # New for Over/Under
     spread_point: float
     outcome_point_Over: float
     home_team: str
