@@ -15,17 +15,20 @@ def get_team_id(team_abbreviation):
 
 # Helper: Process game log into features
 def process_team_stats(game_log_df):
-    # Convert GAME_DATE to datetime
+    # Ensure GAME_DATE is datetime
     game_log_df['GAME_DATE'] = pd.to_datetime(game_log_df['GAME_DATE'])
 
-    # Rest days
+    #  Sort by date descending (latest games first)
+    game_log_df = game_log_df.sort_values(by='GAME_DATE', ascending=False).reset_index(drop=True)
+
+    # Calculate rest days
     game_log_df['REST_DAYS'] = game_log_df['GAME_DATE'].diff().dt.days.fillna(0).astype(int)
 
-    # Win streak
+    # Win streak over last 10 games
     game_log_df['WIN'] = game_log_df['WL'] == 'W'
     win_streak = game_log_df['WIN'].head(10).sum()
 
-    # Rolling averages (last 3 games)
+    # Rolling averages
     roll3 = game_log_df.head(3).mean(numeric_only=True)
     roll5 = game_log_df.head(5).mean(numeric_only=True)
 
@@ -43,6 +46,7 @@ def process_team_stats(game_log_df):
         'tov_roll3': roll3['TOV'],
         'is_back_to_back': is_back_to_back
     }
+
 
 # Main function: Build feature vector for game
 async def build_feature_vector(home_team_abbr, away_team_abbr):
