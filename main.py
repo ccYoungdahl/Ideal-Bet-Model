@@ -59,7 +59,13 @@ async def predict_bet(user_bet: UserBet):
     if data['user_team'] in ["home", "away"]:
         implied_prob = home_implied if data['user_team'] == "home" else away_implied
     elif data['user_team'] in ["over", "under"]:
-        implied_prob = None  # O/U market odds were not included in this architecture
+        if odds_data['over_odds'] is None or odds_data['under_odds'] is None:
+            raise ValueError("Missing totals odds for Over/Under market")
+        implied_prob = (
+            implied_probability(odds_data['over_odds'])
+            if data['user_team'] =="over"
+            else implied_probability(odds_data['under_odds'])
+        )
     else:
         raise ValueError("Invalid user_team value")
 
