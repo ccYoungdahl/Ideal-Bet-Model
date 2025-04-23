@@ -30,6 +30,8 @@ async def get_odds(event_id: str, bookmaker: str = None):
 
     spread_point = None
     total_point = None
+    over_odds = None
+    under_odds = None
     moneyline_home = None
     moneyline_away = None
 
@@ -60,9 +62,12 @@ async def get_odds(event_id: str, bookmaker: str = None):
             for outcome in totals_market.get('outcomes', []):
                 if outcome['name'].lower() == 'over':
                     total_point = outcome.get('point')
+                    over_odds = outcome.get('price')
+                if outcome['name'].lower() == 'under':
+                    under_odds = outcome.get('price')
 
         # Exit early if all found
-        if all([spread_point, total_point, moneyline_home, moneyline_away]):
+        if all([spread_point, total_point, over_odds, under_odds, moneyline_home, moneyline_away]):
             break
 
     logger.info(f"Odds fetched for event {event_id}: Spread {spread_point}, Total {total_point}, Moneyline Home {moneyline_home}, Away {moneyline_away}")
@@ -70,6 +75,8 @@ async def get_odds(event_id: str, bookmaker: str = None):
     return {
         "spread_point": spread_point,
         "outcome_point_Over": total_point,
+        "over_odds": over_odds,
+        "under_odds": under_odds,
         "moneyline_home": moneyline_home,
         "moneyline_away": moneyline_away
     }
