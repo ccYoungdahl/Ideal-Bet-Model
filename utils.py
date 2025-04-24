@@ -21,3 +21,13 @@ def to_py(obj):
     if hasattr(obj, "item"):
         return obj.item()
     return obj
+
+def certainty_level(certainty):
+    if certainty >= 0.40:      # P ≥ 0.90  or ≤ 0.10
+        return "High"
+    elif certainty >= 0.25:    # P ≥ 0.75  or ≤ 0.25
+        return "Moderate"
+    elif certainty >= 0.10:    # P ≥ 0.60  or ≤ 0.40
+        return "Low"
+    else:
+        return "Negligible"
