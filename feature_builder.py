@@ -8,6 +8,21 @@ logger = logging.getLogger(__name__)
 # -------- load cached logs -----------------------------------------
 logs = pd.read_csv("team_game_logs.csv", parse_dates=["GAME_DATE"])
 
+if "REST_DAYS" not in logs.columns:
+    logs.sort_values(["TEAM_ABBREVIATION", "GAME_DATE"], inplace=True)
+    logs["REST_DAYS"] = (
+        logs.groupby("TEAM_ABBREVIATION")["GAME_DATE"]
+            .diff()
+            .dt.days
+            .fillna(0)
+            .clip(lower=0)
+            .astype(int)
+    )
+
+# 2) WIN flag  (1 if WL == 'W')
+if "WIN" not in logs.columns:
+    logs["WIN"] = (logs["WL"] == "W").astype(int)
+    
 # eFG% fallback if missing
 if "EFG_PCT" not in logs.columns:
     logs["EFG_PCT"] = logs["FG_PCT"]
