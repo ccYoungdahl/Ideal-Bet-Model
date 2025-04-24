@@ -8,6 +8,7 @@ from odds_client import get_odds
 from utils import implied_probability, edge_level, to_py
 from typing import Optional
 import logging
+import numpy as np
 
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +35,11 @@ async def predict_bet(user_bet: UserBet):
     odds_data = await get_odds(event_id=data['event_id'], bookmaker=data.get('bookmaker'))
     features['spread_point'] = odds_data['spread_point']
     features['outcome_point_Over'] = odds_data['outcome_point_Over']
+    #Calc Pace-Adjusted Total
+    if features["outcome_point_Over"] is not None:
+        avg_pace = np.nanmean([features["home_pace_last5"], features["away_pace_last5"]])
+        if not np.isnan(avg_pace):
+            features["pace_adj_total"] = features["outcome_point_Over"] * (avg_pace / LEAGUE_PACE)
 
     # Step 3: Calculate implied probabilities from moneyline odds
     if not odds_data['moneyline_home'] or not odds_data['moneyline_away']:
