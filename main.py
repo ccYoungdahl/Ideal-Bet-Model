@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from feature_builder import build_feature_vector
-from model_loader import predict
+from model_loader import predict_prob
 from odds_client import get_odds
 from utils import implied_probability, edge_level, to_py
 from typing import Optional
@@ -56,7 +56,7 @@ async def predict_bet(user_bet: UserBet):
     # 4. Get the correct model and probability for the user's side
     # ------------------------------------------------------------
     #model = get_model(data['market'])
-    model_prob_home = predict(features, model)          # P(home wins)  or  P(over)
+    model_prob_home = predict_prob(features, model)          # P(home wins)  or  P(over)
 
     is_over_market = data['market'] == "overunder"
     user_is_fav    = (
