@@ -45,47 +45,66 @@ async def predict_bet(user_bet: UserBet):
     features['implied_prob_home'] = home_implied
     features['implied_prob_away'] = away_implied
 
-    # Step 4: Get model and predict
+   # ------------------------------------------------------------
+    # 4. Get the correct model and probability for the user's side
+    # ------------------------------------------------------------
     model = get_model(data['market'])
-    model_prob_home = predict(features, model)
+    model_prob_home = predict(features, model)          # P(home wins)  or  P(over)
 
-    # Step 5: Adjust probability for user bet direction
-    if data['market'] == "overunder":
-        model_prob = model_prob_home if data['user_team'] == "over" else 1 - model_prob_home
-    else:
-        model_prob = model_prob_home if data['user_team'] == "home" else 1 - model_prob_home
+    is_over_market = data['market'] == "overunder"
+    user_is_fav    = (
+        (is_over_market and data['user_team'] == "over") or
+        (not is_over_market and data['user_team'] == "home")
+    )
+    model_prob = model_prob_home if user_is_fav else 1 - model_prob_home
 
-    # Step 6: Calculate value edge
+    # ------------------------------------------------------------
+    # 5. Model certainty  (distance from 0.50)
+    # ------------------------------------------------------------
+    certainty = abs(model_prob - 0.50)                 # 0–0.50 scale
+    from utils import certainty_level, edge_level
+    certainty_bucket = certainty_level(certainty)
+
+    # ------------------------------------------------------------
+    # 6. Edge versus bookmaker price
+    # ------------------------------------------------------------
     if data['user_team'] in ["home", "away"]:
         implied_prob = home_implied if data['user_team'] == "home" else away_implied
-    elif data['user_team'] in ["over", "under"]:
-        if odds_data['over_odds'] is None or odds_data['under_odds'] is None:
-            raise ValueError("Missing totals odds for Over/Under market")
+    else:  # over / under
         implied_prob = (
             implied_probability(odds_data['over_odds'])
-            if data['user_team'] =="over"
+            if data['user_team'] == "over"
             else implied_probability(odds_data['under_odds'])
         )
-    else:
-        raise ValueError("Invalid user_team value")
 
-    value_edge = model_prob - implied_prob if implied_prob is not None else None
-    recommendation = "Bet" if value_edge and value_edge > 0.01 else "Pass"
-    confidence = edge_level(value_edge) if value_edge is not None else "Unknown"
+    value_edge = model_prob - implied_prob
 
+    # ------------------------------------------------------------
+    # 7. Confidence label – take the worse of edge-bucket & certainty-bucket
+    # ------------------------------------------------------------
+    edge_bucket = edge_level(abs(value_edge))
+    ordered = ["Negligible", "Low", "Moderate", "High"]        
+    confidence = min(edge_bucket, certainty_bucket, key=ordered.index)
+
+    # ------------------------------------------------------------
+    # 8. Recommendation – only bet if edge ≥ 1 pp AND certainty ≥ Low
+    # ------------------------------------------------------------
+    recommendation = (
+        "Bet" if value_edge > 0.01 and certainty >= 0.10 else "Pass"
+    )
+
+    # ------------------------------------------------------------
+    # 9. Build the response  (unchanged keys)
+    # ------------------------------------------------------------
     response = {
         "bet_type": data['market'],
-        "teams": {
-            "home": data['home_team'],
-            "away": data['away_team']
-        },
+        "teams": {"home": data['home_team'], "away": data['away_team']},
         "user_team": data['user_team'],
         "model_prob": to_py(round(model_prob, 3)),
-        "value_edge": to_py(round(value_edge, 3)) if value_edge is not None else None,
+        "value_edge": to_py(round(value_edge, 3)),
         "model_recommendation": recommendation,
         "confidence_level": confidence
     }
-
     logger.info(f"✅ Prediction completed: {response}")
     return response
 
