@@ -60,15 +60,18 @@ async def predict_bet(user_bet: UserBet):
     certainty       = abs(model_prob - 0.5)
     certainty_bucket = certainty_level(certainty)
 
-    # 6) implied prob for this bet --------------------------
-    if data["user_team"] in ("home", "away"):
-        implied_prob = home_implied if data["user_team"] == "home" else away_implied
-    else:  # over / under
-        implied_prob = (
-            implied_probability(odds_data["over_odds"])
-            if data["user_team"] == "over"
-            else implied_probability(odds_data["under_odds"])
-        )
+    
+    # step 6 – implied probability for this bet  (vig-free)--------------
+    if market in ("moneyline", "spread"):
+        overround = home_raw + away_raw
+        fair_home = home_raw / overround
+        fair_away = away_raw / overround
+        implied_prob = fair_home if user_team=="home" else fair_away
+    else:  # over/under
+        overround_tot = over_raw + under_raw
+        implied_prob = (over_raw  / overround_tot if user_team=="over"
+                        else under_raw / overround_tot)
+
 
     value_edge = model_prob - implied_prob
 
