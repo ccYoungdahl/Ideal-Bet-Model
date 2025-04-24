@@ -9,6 +9,7 @@ from utils import implied_probability, edge_level, to_py
 from typing import Optional
 import logging
 import numpy as np
+from feature_builder import LEAGUE_PACE
 
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
