@@ -62,12 +62,18 @@ async def predict_bet(user_bet: UserBet):
 
     
     # step 6 – implied probability for this bet  (vig-free)--------------
+    
+    
     if data["market"] in ("moneyline", "spread"):
+        home_raw = implied_probability(odds_data["moneyline_home"])
+        away_raw = implied_probability(odds_data["moneyline_away"])
         overround = home_raw + away_raw
         fair_home = home_raw / overround
         fair_away = away_raw / overround
         implied_prob = fair_home if data["user_team"]=="home" else fair_away
     else:  # over/under
+        over_raw  = implied_probability(odds_data['over_odds'])
+        under_raw = implied_probability(odds_data['under_odds'])
         overround_tot = over_raw + under_raw
         implied_prob = (over_raw  / overround_tot if data["user_team"]=="over"
                         else under_raw / overround_tot)
