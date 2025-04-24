@@ -16,35 +16,37 @@ with open(MODELS / "spread_sigma.json") as f:
 
 OU_SIGMA = 11.0                                   # keep / tweak later
 
-# --------------------------------------------------------------------
-def predict_prob(features: dict, market: str, user_side: str) -> float:
-    """
-    Return probability user's side wins.
-      • moneyline : classifier
-      • spread    : regression → prob cover
-      • overunder : classifier OR regression
-    """
-    X = pd.DataFrame([features])
+# ---------- helper --------------------------------------------------
+def _prepare_X(feat_dict: dict, feature_names: list[str]) -> pd.DataFrame:
+    """Return DF with exactly feature_names; missing cols get 0.0."""
+    return pd.DataFrame([{k: feat_dict.get(k, 0.0) for k in feature_names}])
 
-    # --- moneyline --------------------------------------------------
+# ---------- main API -----------------------------------------------
+def predict_prob(features: dict, market: str, user_side: str) -> float:
+    # ----- moneyline (binary) --------------------------------------
     if market == "moneyline":
+        fns   = moneyline_model.get_booster().feature_names
+        X     = _prepare_X(features, fns)
         p_home = moneyline_model.predict_proba(X)[0][1]
         return p_home if user_side == "home" else 1 - p_home
 
-    # --- spread (reg) ----------------------------------------------
+    # ----- spread (regression) -------------------------------------
     if market == "spread":
-        margin = spread_reg.predict(X)[0]              # + ⇒ home beats line
-        p_cover_home = 1 - norm.cdf(-margin / SPREAD_SIGMA)
-        return p_cover_home if user_side == "home" else 1 - p_cover_home
+        fns = spread_reg.get_booster().feature_names
+        X   = _prepare_X(features, fns)
+        margin = spread_reg.predict(X)[0]            # + ⇒ home beats line
+        p_home_cover = 1 - norm.cdf(-margin / SPREAD_SIGMA)
+        return p_home_cover if user_side == "home" else 1 - p_home_cover
 
-    # --- over/under -------------------------------------------------
+    # ----- over/under ---------------------------------------------
     if market == "overunder":
+        fns = overunder_model.get_booster().feature_names
+        X   = _prepare_X(features, fns)
         if hasattr(overunder_model, "predict_proba"):
             p_over = overunder_model.predict_proba(X)[0][1]
-        else:                                           # regression margin
-            margin = overunder_model.predict(X)[0]      # + ⇒ game over
+        else:
+            margin = overunder_model.predict(X)[0]   # + ⇒ over
             p_over = 1 - norm.cdf(-margin / OU_SIGMA)
         return p_over if user_side == "over" else 1 - p_over
 
     raise ValueError(f"Unsupported market: {market}")
-
