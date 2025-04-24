@@ -1,102 +1,121 @@
 # feature_builder.py
+import pandas as pd, numpy as np, logging
+from datetime import datetime
 
-import pandas as pd
-import logging
-
-# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-#  Load cached game logs
-try:
-    game_logs_df = pd.read_csv('team_game_logs.csv')
-    game_logs_df['GAME_DATE'] = pd.to_datetime(game_logs_df['GAME_DATE'])
-    logger.info("✅ Loaded cached team_game_logs.csv successfully.")
-except FileNotFoundError:
-    logger.error("❌ team_game_logs.csv not found. Please ensure the cache file is present.")
-    raise
+# -------- load cached logs -----------------------------------------
+logs = pd.read_csv("team_game_logs.csv", parse_dates=["GAME_DATE"])
 
-#  Process individual team stats
-def process_team_stats(team_abbreviation):
-    team_log_df = game_logs_df[game_logs_df['TEAM_ABBREVIATION'] == team_abbreviation]
+# eFG% fallback if missing
+if "EFG_PCT" not in logs.columns:
+    logs["EFG_PCT"] = logs["FG_PCT"]
 
-    if team_log_df.empty:
-        raise ValueError(f"No game logs found for team abbreviation '{team_abbreviation}'.")
+def possessions(r):
+    return r["FGA"] + 0.44 * r["FTA"] - r["OREB"] + r["TOV"]
 
-    # Sort by date, latest game first
-    team_log_df = team_log_df.sort_values(by='GAME_DATE', ascending=False).reset_index(drop=True)
+logs["POSS"]    = logs.apply(possessions, axis=1)
+logs["PACE"]    = logs["POSS"]
+logs["OFF_RTG"] = 100 * logs["PTS"] / logs["POSS"]
 
-    # Defensive check for minimum data
-    if team_log_df.shape[0] < 3:
-        raise ValueError(f"Insufficient game data for team '{team_abbreviation}'. Minimum 3 games required.")
+# opponent PTS for DEF_RTG
+if "GAME_ID" in logs.columns:
+    opp_pts = logs.groupby("GAME_ID")["PTS"].apply(list).to_dict()
+    logs["DEF_RTG"] = logs.apply(lambda r: 100 * opp_pts[r["GAME_ID"]][1] / r["POSS"], axis=1)
+elif "PTS_OPP" in logs.columns:
+    logs["DEF_RTG"] = 100 * logs["PTS_OPP"] / logs["POSS"]
+else:
+    logs["DEF_RTG"] = 100 * logs["PTS"].mean() / logs["POSS"]
 
-    # Calculate rest days (already in data?)
-    if 'REST_DAYS' not in team_log_df.columns:
-        team_log_df['REST_DAYS'] = team_log_df['GAME_DATE'].diff().dt.days.fillna(0).astype(int)
+logs["NET_RTG"] = logs["OFF_RTG"] - logs["DEF_RTG"]
+LEAGUE_PACE = logs["PACE"].mean()
 
-    # Win/Loss
-    team_log_df['WIN'] = team_log_df['WL'] == 'W'
+# -------- helpers --------------------------------------------------
+def _window(team, asof, n):
+    g = logs[(logs.TEAM_ABBREVIATION == team) & (logs.GAME_DATE < asof)]
+    return g.sort_values("GAME_DATE", ascending=False).head(n)
 
-    # Win streak over last 10 games
-    win_streak = team_log_df['WIN'].head(min(10, len(team_log_df))).sum()
+def roll(team, asof, col, n, default=np.nan):
+    g = _window(team, asof, n)
+    return g[col].mean() if len(g) else default
 
-    # Rolling averages
-    roll3 = team_log_df.head(3).mean(numeric_only=True)
-    roll5 = team_log_df.head(min(5, len(team_log_df))).mean(numeric_only=True)
+def win_pct(team, asof, n=None):
+    g = _window(team, asof, n) if n else logs[(logs.TEAM_ABBREVIATION == team) &
+                                              (logs.GAME_DATE < asof)]
+    return (g["WL"] == "W").mean() if len(g) else 0.5
 
-    # Back-to-back indicator
-    last_game_rest = team_log_df['REST_DAYS'].iloc[0]
-    is_back_to_back = int(last_game_rest <= 1)
+# -------------------------------------------------------------------
+async def build_feature_vector(home, away):
+    asof = datetime.utcnow()
+    h, a = home, away
 
-    return {
-        'pts_roll3': roll3.get('PTS', 0),
-        'pts_roll5': roll5.get('PTS', 0),
-        'rest_days': last_game_rest,
-        'win_streak_last_10': win_streak,
-        'fg_pct_roll3': roll3.get('FG_PCT', 0),
-        'reb_roll3': roll3.get('REB', 0),
-        'tov_roll3': roll3.get('TOV', 0),
-        'is_back_to_back': is_back_to_back
+    # ---------- win % and rest -------------------------------------
+    features = {
+        "home_win_pct_last10": win_pct(h, asof, 10),
+        "away_win_pct_last10": win_pct(a, asof, 10),
+        "win_pct_diff_last10": win_pct(h, asof, 10) - win_pct(a, asof, 10),
+
+        "home_win_pct_season": win_pct(h, asof),
+        "away_win_pct_season": win_pct(a, asof),
+        "win_pct_diff_season": win_pct(h, asof) - win_pct(a, asof),
+
+        "home_rest_days": roll(h, asof, "REST_DAYS", 1, 0),
+        "away_rest_days": roll(a, asof, "REST_DAYS", 1, 0),
+        "is_home_back_to_back": int(roll(h, asof, "REST_DAYS", 1, 2) <= 1),
+        "is_away_back_to_back": int(roll(a, asof, "REST_DAYS", 1, 2) <= 1),
     }
+    features["rest_advantage"] = features["home_rest_days"] - features["away_rest_days"]
 
-#  Main function: build feature vector for two teams
-async def build_feature_vector(home_team_abbr, away_team_abbr):
-    try:
-        logger.info(f"🚀 Building feature vector for {home_team_abbr} vs {away_team_abbr} using cached data.")
+    # ---------- win streak diff ------------------------------------
+    features["win_streak_diff"] = (
+        roll(h, asof, "WIN", 10, 0) - roll(a, asof, "WIN", 10, 0)
+    )
 
-        home_stats = process_team_stats(home_team_abbr)
-        away_stats = process_team_stats(away_team_abbr)
+    # ---------- rolling FG% (3-game) -------------------------------
+    features["fg_pct_roll3_home"] = roll(h, asof, "FG_PCT", 3, 0)
+    features["fg_pct_roll3_away"] = roll(a, asof, "FG_PCT", 3, 0)
 
-        features = {
-            'home_avg_pts_last_3': home_stats['pts_roll3'],
-            'home_avg_pts_last_5': home_stats['pts_roll5'],
-            'home_rest_days': home_stats['rest_days'],
-            'home_win_streak_last_10': home_stats['win_streak_last_10'],
+    # ---------- pace & ratings (5-game) ----------------------------
+    features["home_pace_last5"]   = roll(h, asof, "PACE",    5, LEAGUE_PACE)
+    features["away_pace_last5"]   = roll(a, asof, "PACE",    5, LEAGUE_PACE)
+    features["pace_diff_last5"]   = features["home_pace_last5"] - features["away_pace_last5"]
 
-            'away_avg_pts_last_3': away_stats['pts_roll3'],
-            'away_avg_pts_last_5': away_stats['pts_roll5'],
-            'away_rest_days': away_stats['rest_days'],
-            'away_win_streak_last_10': away_stats['win_streak_last_10'],
+    features["home_offrtg_last5"] = roll(h, asof, "OFF_RTG", 5)
+    features["away_offrtg_last5"] = roll(a, asof, "OFF_RTG", 5)
+    features["offrtg_diff_last5"] = features["home_offrtg_last5"] - features["away_offrtg_last5"]
 
-            'form_diff_pts_3': home_stats['pts_roll3'] - away_stats['pts_roll3'],
-            'rest_advantage': home_stats['rest_days'] - away_stats['rest_days'],
-            'win_streak_diff': home_stats['win_streak_last_10'] - away_stats['win_streak_last_10'],
-            'fg_pct_diff_form': home_stats['fg_pct_roll3'] - away_stats['fg_pct_roll3'],
-            'reb_diff_form': home_stats['reb_roll3'] - away_stats['reb_roll3'],
-            'tov_diff_form': home_stats['tov_roll3'] - away_stats['tov_roll3'],
-            'is_home_back_to_back': home_stats['is_back_to_back'],
-            'is_away_back_to_back': away_stats['is_back_to_back'],
+    features["home_defrtg_last5"] = roll(h, asof, "DEF_RTG", 5)
+    features["away_defrtg_last5"] = roll(a, asof, "DEF_RTG", 5)
+    features["defrtg_diff_last5"] = features["home_defrtg_last5"] - features["away_defrtg_last5"]
 
-            # Odds-related features (to be filled later)
-            'implied_prob_home': None,
-            'implied_prob_away': None,
-            'spread_point': None,
-            'outcome_point_Over': None,
-        }
+    features["netrtg_diff_last5"] = (
+        (features["home_offrtg_last5"] - features["home_defrtg_last5"]) -
+        (features["away_offrtg_last5"] - features["away_defrtg_last5"])
+    )
 
-        logger.info(f"✅ Feature vector built successfully for {home_team_abbr} vs {away_team_abbr}")
-        return features
+    # ---------- eFG% diff (5-game) ---------------------------------
+    features["home_efg_pct_last5"] = roll(h, asof, "EFG_PCT", 5)
+    features["away_efg_pct_last5"] = roll(a, asof, "EFG_PCT", 5)
+    features["efg_pct_diff_last5"] = features["home_efg_pct_last5"] - features["away_efg_pct_last5"]
 
-    except Exception as e:
-        logger.error(f"❌ Error building feature vector: {e}")
-        raise RuntimeError(f"Failed to build features for {home_team_abbr} vs {away_team_abbr}: {e}")
+    # ---------- volume stats (5-game) ------------------------------
+    for stat, prefix in [("PTS", "ppg"), ("FGA", "fga"), ("FG3A", "fg3a"), ("FTA", "fta")]:
+        features[f"home_{prefix}_last5"] = roll(h, asof, stat, 5)
+        features[f"away_{prefix}_last5"] = roll(a, asof, stat, 5)
+        features[f"{prefix}_diff_last5"] = features[f"home_{prefix}_last5"] - features[f"away_{prefix}_last5"]
+
+    # ---------- turnovers diff (3-game) ----------------------------
+    features["tov_diff_form"] = roll(h, asof, "TOV", 3, 0) - roll(a, asof, "TOV", 3, 0)
+
+    # ---------- placeholders filled later --------------------------
+    features.update({
+        "implied_prob_home": None,
+        "implied_prob_away": None,
+        "spread_point": None,
+        "outcome_point_Over": None,
+        "pace_adj_total": None,
+    })
+
+    logger.info(f"✅ Features built for {h} vs {a}")
+    return features
